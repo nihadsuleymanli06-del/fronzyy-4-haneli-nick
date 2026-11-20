@@ -65,17 +65,12 @@ function generate4CharNick() {
   return fallback;
 }
 
-// Bulunan nicki Başlat butonuna basan kullanıcıya DM ile gönder
-async function notifyRequesterDM(targetUser, nick, detailText) {
-  if (!targetUser) return;
+async function sendChannelStatus(channel, text) {
+  if (!channel) return;
   try {
-    await targetUser.send(
-      `🎉 **4 Haneli Nick Bulundu!**\n` +
-      `🏷️ **Nick:** \`${nick}\`\n` +
-      `📌 **Detay:** ${detailText}`
-    );
+    await channel.send(text);
   } catch (err) {
-    console.error(`DM gönderme hatası (${targetUser.id}):`, err.message);
+    console.error('Kanal mesajı gönderme hatası:', err.message);
   }
 }
 
@@ -125,7 +120,7 @@ client.on('messageCreate', async (message) => {
         new TextDisplayBuilder().setContent('## **Ne İşe Yarar?**')
       )
       .addTextDisplayComponents(
-        new TextDisplayBuilder().setContent('• 4 haneli (4 karakterli) uygun kullanıcı adlarını arar ve boşta olan bir nick bulduğunda hesaba eklemeden doğrudan **Başlat** butonuna basan kişiye **DM üzerinden** bildirir.')
+        new TextDisplayBuilder().setContent('• 4 haneli (4 karakterli) uygun kullanıcı adlarını arar ve denenen nickleri kanalda `gj_a ❌` formatında gösterir; uygun nick bulunduğunda kanalda bildirir.')
       )
       .addSeparatorComponents(
         new SeparatorBuilder().setDivider(true)
@@ -134,7 +129,7 @@ client.on('messageCreate', async (message) => {
         new TextDisplayBuilder().setContent('## **Nasıl Kullanılır?**')
       )
       .addTextDisplayComponents(
-        new TextDisplayBuilder().setContent('• **▶️ Başlat** : Butona tıklayın, token ve arama aralığını (en az 2 saniye) girin. Nick bulunduğunda bot size DM mesajı gönderir.')
+        new TextDisplayBuilder().setContent('• **▶️ Başlat** : Butona tıklayın, token ve arama aralığını (en az 2 saniye) girin. Denenen nickler bu kanala yazılır.')
       )
       .addSeparatorComponents(
         new SeparatorBuilder().setDivider(true)
@@ -190,7 +185,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     if (interaction.isModalSubmit() && interaction.customId === 'nick_start_modal') {
-      const requesterUser = interaction.user;
+      const targetChannel = interaction.channel;
       const targetToken = interaction.fields.getTextInputValue('target_token').trim();
       const intervalSec = parseFloat(interaction.fields.getTextInputValue('interval_sec'));
 
@@ -210,7 +205,7 @@ client.on('interactionCreate', async (interaction) => {
       attemptCount = 0;
 
       await interaction.reply({
-        content: `▶️ **4 Haneli Nick** araması başlatıldı! (Aralık: **${intervalSec}s**) — Hesaba eklenmez, bulunursa size (<@${requesterUser.id}>) DM'den haber verilir.`,
+        content: `▶️ **4 Haneli Nick** araması başlatıldı! (Aralık: **${intervalSec}s**) — Denenen nickler kanala yazılacak.`,
         ephemeral: true
       });
 
@@ -231,12 +226,8 @@ client.on('interactionCreate', async (interaction) => {
           });
 
           if (res.status === 200) {
-            console.log(`[BULUNDU] #${attemptCount} | 4 haneli nick: ${candidate} -> Bildirim: ${requesterUser.tag}`);
-            await notifyRequesterDM(
-              requesterUser,
-              candidate,
-              'Uygun 4 haneli nick tespit edildi ve size DM ile bildirildi (hesaba otomatik ekleme yapılmadı).'
-            );
+            console.log(`[BULUNDU] #${attemptCount} | ${candidate} ✅`);
+            await sendChannelStatus(targetChannel, `${candidate} ✅`);
             clearInterval(activeTimer);
             activeTimer = null;
           } else if (res.status === 429) {
@@ -244,16 +235,19 @@ client.on('interactionCreate', async (interaction) => {
             const waitSec = Math.max(3, Math.ceil(Number(data.retry_after) || 5));
             isPausedByRateLimit = true;
             console.warn(`[RATE LIMIT] #${attemptCount} | ${waitSec}s bekleniyor...`);
+            await sendChannelStatus(targetChannel, `⏳ Rate limit (${waitSec}s bekleniyor)...`);
 
             setTimeout(() => {
               isPausedByRateLimit = false;
             }, waitSec * 1000);
           } else {
             await res.json().catch(() => ({}));
-            console.log(`[DENENDİ] #${attemptCount} | Nick: ${candidate} | HTTP: ${res.status}`);
+            console.log(`[DENENDİ] #${attemptCount} | ${candidate} ❌ | HTTP: ${res.status}`);
+            await sendChannelStatus(targetChannel, `${candidate} ❌`);
           }
         } catch (err) {
           console.error(`[HATA] #${attemptCount} | Nick kontrol hatası:`, err.message);
+          await sendChannelStatus(targetChannel, `${candidate} ❌`);
         }
       }, intervalSec * 1000);
     }
