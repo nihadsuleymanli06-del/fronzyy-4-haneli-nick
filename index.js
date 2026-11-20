@@ -37,7 +37,7 @@ const client = new Client({
   ]
 });
 
-// Yetkili kişinin ID'si (Bulunan 4 haneli nick buraya DM olarak gönderilir)
+// Paneli açabilecek yetkili kullanıcı ID'si
 const OWNER_ID = '1184518857679962186';
 
 const CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789_';
@@ -64,19 +64,17 @@ function generate4CharNick() {
   return fallback;
 }
 
-async function notifyOwnerDM(nick, infoText) {
-  if (!OWNER_ID) return;
+// Bulunan nicki Başlat butonuna basan kullanıcıya DM ile gönder
+async function notifyRequesterDM(targetUser, nick, detailText) {
+  if (!targetUser) return;
   try {
-    const owner = await client.users.fetch(OWNER_ID);
-    if (owner) {
-      await owner.send(
-        `🎉 **4 Haneli Nick Bulundu!**\n` +
-        `🏷️ **Nick:** \`${nick}\`\n` +
-        `📌 **Detay:** ${infoText}`
-      );
-    }
+    await targetUser.send(
+      `🎉 **4 Haneli Nick Bulundu!**\n` +
+      `🏷️ **Nick:** \`${nick}\`\n` +
+      `📌 **Detay:** ${detailText}`
+    );
   } catch (err) {
-    console.error('DM gönderme hatası:', err.message);
+    console.error(`DM gönderme hatası (${targetUser.id}):`, err.message);
   }
 }
 
@@ -126,7 +124,7 @@ client.on('messageCreate', async (message) => {
         new TextDisplayBuilder().setContent('## **Ne İşe Yarar?**')
       )
       .addTextDisplayComponents(
-        new TextDisplayBuilder().setContent('• 4 haneli (4 karakterli) uygun kullanıcı adlarını hızlıca tarar, boşta olan nick yakaladığı an size **DM üzerinden** haber verir ve isterseniz hesaba otomatik uygular.')
+        new TextDisplayBuilder().setContent('• 4 haneli (4 karakterli) uygun kullanıcı adlarını arar ve boşta olan bir nick bulduğunda hesaba eklemeden doğrudan **Başlat** butonuna basan kişiye **DM üzerinden** bildirir.')
       )
       .addSeparatorComponents(
         new SeparatorBuilder().setDivider(true)
@@ -135,7 +133,7 @@ client.on('messageCreate', async (message) => {
         new TextDisplayBuilder().setContent('## **Nasıl Kullanılır?**')
       )
       .addTextDisplayComponents(
-        new TextDisplayBuilder().setContent('• **▶️ Başlat** : Butona basın, token, arama hızı (saniye) ve otomatik koyma tercihini girerek hızlı 4 haneli nick aramasını başlatın. Nick bulunduğunda bot size DM atar.')
+        new TextDisplayBuilder().setContent('• **▶️ Başlat** : Butona tıklayın, token ve arama aralığını (en az 2 saniye) girin. Nick bulunduğunda bot size DM mesajı gönderir.')
       )
       .addSeparatorComponents(
         new SeparatorBuilder().setDivider(true)
@@ -162,107 +160,110 @@ client.on('messageCreate', async (message) => {
 
 // Buton ve Modal etkileşimleri
 client.on('interactionCreate', async (interaction) => {
-  if (interaction.isButton() && interaction.customId === 'start_nick') {
-    const modal = new ModalBuilder()
-      .setCustomId('nick_start_modal')
-      .setTitle('Hızlı 4 Haneli Nick Arama');
+  try {
+    if (interaction.isButton() && interaction.customId === 'start_nick') {
+      const modal = new ModalBuilder()
+        .setCustomId('nick_start_modal')
+        .setTitle('4 Haneli Nick Arama');
 
-    const accountTokenInput = new TextInputBuilder()
-      .setCustomId('target_token')
-      .setLabel('Hesap Tokeni')
-      .setStyle(TextInputStyle.Short)
-      .setRequired(true);
+      const accountTokenInput = new TextInputBuilder()
+        .setCustomId('target_token')
+        .setLabel('Kontrol İçin Hesap Tokeni')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
 
-    const intervalInput = new TextInputBuilder()
-      .setCustomId('interval_sec')
-      .setLabel('Kaç saniyede bir hızlı aransın? (örn: 1.5)')
-      .setValue('1.5')
-      .setStyle(TextInputStyle.Short)
-      .setRequired(true);
+      const intervalInput = new TextInputBuilder()
+        .setCustomId('interval_sec')
+        .setLabel('Kaç saniyede bir aransın? (en az 2)')
+        .setValue('2.5')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
 
-    const autoSetInput = new TextInputBuilder()
-      .setCustomId('auto_set')
-      .setLabel('Bulunan nicki hesaba da koysun mu? (evet/hayır)')
-      .setValue('hayır')
-      .setPlaceholder('evet veya hayır')
-      .setStyle(TextInputStyle.Short)
-      .setRequired(true);
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(accountTokenInput),
+        new ActionRowBuilder().addComponents(intervalInput)
+      );
 
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(accountTokenInput),
-      new ActionRowBuilder().addComponents(intervalInput),
-      new ActionRowBuilder().addComponents(autoSetInput)
-    );
-
-    await interaction.showModal(modal);
-  }
-
-  if (interaction.isModalSubmit() && interaction.customId === 'nick_start_modal') {
-    const targetToken = interaction.fields.getTextInputValue('target_token').trim();
-    const intervalSec = parseFloat(interaction.fields.getTextInputValue('interval_sec'));
-    const autoSetRaw = interaction.fields.getTextInputValue('auto_set').trim().toLowerCase();
-    const autoSet = autoSetRaw === 'evet' || autoSetRaw === 'yes' || autoSetRaw === 'true';
-
-    if (isNaN(intervalSec) || intervalSec < 0.3) {
-      return interaction.reply({ content: '❌ Lütfen en az 0.3 saniye veya daha yüksek geçerli bir süre girin!', ephemeral: true });
+      await interaction.showModal(modal);
+      return;
     }
 
-    if (activeTimer) {
-      clearInterval(activeTimer);
-      activeTimer = null;
-    }
-    isPausedByRateLimit = false;
+    if (interaction.isModalSubmit() && interaction.customId === 'nick_start_modal') {
+      const requesterUser = interaction.user;
+      const targetToken = interaction.fields.getTextInputValue('target_token').trim();
+      const intervalSec = parseFloat(interaction.fields.getTextInputValue('interval_sec'));
 
-    await interaction.reply({
-      content: `▶️ Hızlı **4 Haneli Nick** araması başlatıldı! (Hız: **${intervalSec}s**, Otomatik Koy: **${autoSet ? 'Evet' : 'Hayır'}**) — Bulunca DM'den bildirilecek.`,
-      ephemeral: true
-    });
-
-    activeTimer = setInterval(async () => {
-      if (isPausedByRateLimit) return;
-
-      const candidate = generate4CharNick();
-
-      try {
-        const res = await fetch('https://discord.com/api/v9/users/@me', {
-          method: 'PATCH',
-          headers: {
-            'Authorization': targetToken,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ username: candidate })
+      if (isNaN(intervalSec) || intervalSec < 2) {
+        await interaction.reply({
+          content: '❌ Lütfen en az 2 saniye veya daha yüksek geçerli bir süre girin!',
+          ephemeral: true
         });
-
-        if (res.status === 200) {
-          console.log(`[BULUNDU] 4 haneli nick: ${candidate}`);
-          await notifyOwnerDM(
-            candidate,
-            autoSet
-              ? 'Boşta olan 4 haneli nick bulundu ve hesaba uygulandı. Arama durduruldu.'
-              : 'Boşta olan 4 haneli nick bulundu ve DM ile bildirildi. Arama durduruldu.'
-          );
-          clearInterval(activeTimer);
-          activeTimer = null;
-        } else if (res.status === 429) {
-          const data = await res.json().catch(() => ({}));
-          const waitSec = Math.max(2, Math.ceil(Number(data.retry_after) || 5));
-          isPausedByRateLimit = true;
-          console.warn(`[RATE LIMIT] ${waitSec}s bekleniyor...`);
-
-          setTimeout(() => {
-            isPausedByRateLimit = false;
-          }, waitSec * 1000);
-        } else {
-          const errData = await res.json().catch(() => ({}));
-          const rawErr = JSON.stringify(errData).toLowerCase();
-          if (!rawErr.includes('username')) {
-            console.log(`[KONTROL] ${candidate} | Durum: ${res.status}`);
-          }
-        }
-      } catch (err) {
-        console.error('Nick kontrol hatası:', err.message);
+        return;
       }
-    }, intervalSec * 1000);
+
+      if (activeTimer) {
+        clearInterval(activeTimer);
+        activeTimer = null;
+      }
+      isPausedByRateLimit = false;
+
+      await interaction.reply({
+        content: `▶️ **4 Haneli Nick** araması başlatıldı! (Aralık: **${intervalSec}s**) — Hesaba eklenmez, bulunursa size (<@${requesterUser.id}>) DM'den haber verilir.`,
+        ephemeral: true
+      });
+
+      activeTimer = setInterval(async () => {
+        if (isPausedByRateLimit) return;
+
+        const candidate = generate4CharNick();
+
+        try {
+          const res = await fetch('https://discord.com/api/v9/users/@me', {
+            method: 'PATCH',
+            headers: {
+              'Authorization': targetToken,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ username: candidate })
+          });
+
+          if (res.status === 200) {
+            console.log(`[BULUNDU] 4 haneli nick: ${candidate} -> Bildirim: ${requesterUser.tag}`);
+            await notifyRequesterDM(
+              requesterUser,
+              candidate,
+              'Uygun 4 haneli nick tespit edildi ve size DM ile bildirildi (hesaba otomatik ekleme yapılmadı).'
+            );
+            clearInterval(activeTimer);
+            activeTimer = null;
+          } else if (res.status === 429) {
+            const data = await res.json().catch(() => ({}));
+            const waitSec = Math.max(3, Math.ceil(Number(data.retry_after) || 5));
+            isPausedByRateLimit = true;
+            console.warn(`[RATE LIMIT] ${waitSec}s bekleniyor...`);
+
+            setTimeout(() => {
+              isPausedByRateLimit = false;
+            }, waitSec * 1000);
+          } else {
+            const errData = await res.json().catch(() => ({}));
+            const rawErr = JSON.stringify(errData).toLowerCase();
+            if (!rawErr.includes('username')) {
+              console.log(`[KONTROL] ${candidate} | Durum: ${res.status}`);
+            }
+          }
+        } catch (err) {
+          console.error('Nick kontrol hatası:', err.message);
+        }
+      }, intervalSec * 1000);
+    }
+  } catch (err) {
+    console.error('Interaction hatası:', err);
+    if (!interaction.replied && !interaction.deferred) {
+      try {
+        await interaction.reply({ content: '❌ İşlem sırasında bir hata oluştu.', ephemeral: true });
+      } catch (e) {}
+    }
   }
 });
 
