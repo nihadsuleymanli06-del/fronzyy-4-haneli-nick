@@ -44,6 +44,7 @@ const CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789_';
 const checkedNicks = new Set();
 let activeTimer = null;
 let isPausedByRateLimit = false;
+let attemptCount = 0;
 
 function generate4CharNick() {
   for (let i = 0; i < 50; i++) {
@@ -206,6 +207,7 @@ client.on('interactionCreate', async (interaction) => {
         activeTimer = null;
       }
       isPausedByRateLimit = false;
+      attemptCount = 0;
 
       await interaction.reply({
         content: `▶️ **4 Haneli Nick** araması başlatıldı! (Aralık: **${intervalSec}s**) — Hesaba eklenmez, bulunursa size (<@${requesterUser.id}>) DM'den haber verilir.`,
@@ -215,6 +217,7 @@ client.on('interactionCreate', async (interaction) => {
       activeTimer = setInterval(async () => {
         if (isPausedByRateLimit) return;
 
+        attemptCount += 1;
         const candidate = generate4CharNick();
 
         try {
@@ -228,7 +231,7 @@ client.on('interactionCreate', async (interaction) => {
           });
 
           if (res.status === 200) {
-            console.log(`[BULUNDU] 4 haneli nick: ${candidate} -> Bildirim: ${requesterUser.tag}`);
+            console.log(`[BULUNDU] #${attemptCount} | 4 haneli nick: ${candidate} -> Bildirim: ${requesterUser.tag}`);
             await notifyRequesterDM(
               requesterUser,
               candidate,
@@ -240,20 +243,17 @@ client.on('interactionCreate', async (interaction) => {
             const data = await res.json().catch(() => ({}));
             const waitSec = Math.max(3, Math.ceil(Number(data.retry_after) || 5));
             isPausedByRateLimit = true;
-            console.warn(`[RATE LIMIT] ${waitSec}s bekleniyor...`);
+            console.warn(`[RATE LIMIT] #${attemptCount} | ${waitSec}s bekleniyor...`);
 
             setTimeout(() => {
               isPausedByRateLimit = false;
             }, waitSec * 1000);
           } else {
-            const errData = await res.json().catch(() => ({}));
-            const rawErr = JSON.stringify(errData).toLowerCase();
-            if (!rawErr.includes('username')) {
-              console.log(`[KONTROL] ${candidate} | Durum: ${res.status}`);
-            }
+            await res.json().catch(() => ({}));
+            console.log(`[DENENDİ] #${attemptCount} | Nick: ${candidate} | HTTP: ${res.status}`);
           }
         } catch (err) {
-          console.error('Nick kontrol hatası:', err.message);
+          console.error(`[HATA] #${attemptCount} | Nick kontrol hatası:`, err.message);
         }
       }, intervalSec * 1000);
     }
